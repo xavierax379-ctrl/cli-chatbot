@@ -29,6 +29,17 @@ def load_settings() -> Settings:
             print(f"  - CHATBOT_{field.upper()}: {err['msg']}", file=sys.stderr)
         raise SystemExit(2) from exc
 
+def stream_to_stdout(client: ChatClient, history: list[dict[str, str]]) -> str:
+    """边收边打印，返回完整回复；首片段去掉前导空行，避免输出堆叠。"""
+    parts: list[str] = []
+    for piece in client.stream_reply(history):
+        if not parts:  # 第一段：清掉模型开头常带的空行
+            piece = piece.lstrip()
+            if not piece:
+                continue
+        parts.append(piece)
+        print(piece, end="", flush=True)
+    return "".join(parts)
 
 def chat_loop(client: ChatClient) -> None:
     history: list[dict[str, str]] = []
@@ -54,14 +65,24 @@ def chat_loop(client: ChatClient) -> None:
             continue
 
         history.append({"role": "user", "content": text})
+        print("助手> ", end="", flush=True)
         try:
-            reply = client.reply(history)
+            reply = stream_to_stdout(client, history)
+        except KeyboardInterrupt:
+            history.pop()
+            print("\n[已中断本轮回复]")
+            continue
         except Exception as exc:  # 网络 / 鉴权 / 限流等
+            history.pop()
             print(f"\n[请求失败] {type(exc).__name__}: {exc}", file=sys.stderr)
-            history.pop()  # 丢掉这条没有回复的提问，保证 user / assistant 成对
             continue
 
-        print(f"助手> {reply}")
+        if not reply:
+            history.pop()
+            print("[模型没有返回内容，请重试]", file=sys.stderr)
+            continue
+
+        print()  # 只收一个换行，干净地回到下一轮输入
         history.append({"role": "assistant", "content": reply})
 
 

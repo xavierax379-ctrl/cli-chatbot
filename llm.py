@@ -1,7 +1,8 @@
-"""大模型调用的封装：负责拼 messages、裁剪历史、发起请求。"""
+"""大模型调用的封装：负责拼 messages、裁剪历史、发起流式请求。"""
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any
 
 from openai import OpenAI
@@ -35,12 +36,18 @@ class ChatClient:
             timeout=settings.request_timeout,
         )
 
-    def reply(self, history: list[Message]) -> str:
-        """根据历史消息返回一条完整回复。"""
-        response = self._client.chat.completions.create(
+    def stream_reply(self, history: list[Message]) -> Iterator[str]:
+        """按片段产出回复文本：收到一段就能立刻打印，不用等全部生成完。"""
+        stream = self._client.chat.completions.create(
             model=self._settings.model,
             messages=build_messages(self._settings, history),
             temperature=self._settings.temperature,
             max_tokens=self._settings.max_tokens,
+            stream=True,  # 需求要求边收边打，所以不做成可配置开关
         )
-        return response.choices[0].message.content or ""
+        for chunk in stream:
+            if not chunk.choices:  # 有的实现会在末尾发一个只有 usage 的空 chunk
+                continue
+            content = getattr(chunk.choices[0].delta, "content", None)
+            if content:
+                yield content
