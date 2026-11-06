@@ -30,6 +30,12 @@ class Settings(BaseSettings):
     max_tokens: int = Field(default=1024, gt=0)
 
     system_prompt: str = "你是一个乐于助人的中文助手，回答简洁准确。"
+    # 学习功能（单词讲解）的 system prompt
+    study_system_prompt: str = (
+        "你是一位英语老师。用户会给你一个英语单词，请用中文讲解："
+        "1) 词性与中文释义；2) 两三个常见搭配；3) 一个例句及中文翻译。"
+        "控制在 150 字以内，不要寒暄。"
+    )
     history_limit: int = Field(default=20, ge=0)
     request_timeout: float = Field(default=60.0, gt=0)
 

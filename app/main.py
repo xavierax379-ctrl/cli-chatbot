@@ -10,6 +10,16 @@ from app.deps import get_client, get_store
 from app.schemas import ChatRequest, ChatResponse, MessageList, SessionList
 from app.store import SessionNotFound, SessionStore
 from llm import ChatClient
+from app.schemas import (
+    ChatRequest,
+    ChatResponse,
+    MessageList,
+    SessionList,
+    WordRequest,
+    WordResponse,
+)
+from app.study import explain_word
+from config import Settings, get_settings
 
 app = FastAPI(title="Chatbot API", version="0.1.0")
 
@@ -106,3 +116,19 @@ def chat_stream(
                 store.pop_last(session_id)
 
     return StreamingResponse(generate(), media_type="text/plain; charset=utf-8")
+
+@app.post("/study/word", response_model=WordResponse)
+def study_word(
+    payload: WordRequest,
+    settings: Settings = Depends(get_settings),
+    client: ChatClient = Depends(get_client),
+) -> WordResponse:
+    """学习功能：讲解一个英语单词（独立接口，不写入会话历史）。"""
+    try:
+        explanation = explain_word(client, settings.study_system_prompt, payload.word)
+    except Exception as exc:  # 网络 / 鉴权 / 限流等
+        raise HTTPException(
+            status_code=502,
+            detail=f"模型调用失败：{type(exc).__name__}",
+        ) from exc
+    return WordResponse(word=payload.word, explanation=explanation)
