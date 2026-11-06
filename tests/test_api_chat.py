@@ -55,3 +55,22 @@ def test_model_failure_returns_502_and_rolls_back(api, fake_openai, store):
 
     assert resp.status_code == 502
     assert store.messages("u1") == []  # 没有回复的提问被撤销
+
+def test_study_word_returns_explanation(api, fake_openai):
+    resp = api.post("/study/word", json={"word": "apple"})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["word"] == "apple"
+    assert body["explanation"]
+
+    # 用的是学习功能的 system prompt（英语老师），不是对话人设
+    system_content = fake_openai.calls[0]["messages"][0]["content"]
+    assert "英语" in system_content
+
+    # 学习功能不创建会话
+    assert api.get("/sessions").json() == {"sessions": []}
+
+
+def test_study_word_rejects_blank(api):
+    assert api.post("/study/word", json={"word": "   "}).status_code == 422

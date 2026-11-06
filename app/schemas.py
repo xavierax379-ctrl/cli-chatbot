@@ -25,6 +25,24 @@ class ChatRequest(BaseModel):
             raise ValueError("不能为空或只包含空白字符")
         return value
 
+class WordRequest(BaseModel):
+    """单词讲解请求。"""
+
+    word: str = Field(min_length=1, max_length=64)
+
+    @field_validator("word")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("不能为空或只包含空白字符")
+        return value
+
+
+class WordResponse(BaseModel):
+    word: str
+    explanation: str
+
 
 class ChatResponse(BaseModel):
     session_id: str
