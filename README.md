@@ -6,4 +6,4 @@
 
     python -m venv .venv
     pip install -r requirements-dev.txt
-    python main.py
+    python cli.py
