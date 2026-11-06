@@ -14,12 +14,12 @@ class FakeCompletions:
     def __init__(self, replies: list[str] | None = None, pieces: tuple[str, ...] = ("ok",)) -> None:
         self.calls: list[dict] = []
         self._replies = list(replies) if replies else ["这是模型返回的假回复"]
-        self._pieces = pieces
+        self.pieces = pieces
 
     def create(self, **kwargs):
         self.calls.append(kwargs)
         if kwargs.get("stream"):
-            return iter([_chunk(piece) for piece in self._pieces])
+            return iter([_chunk(piece) for piece in self.pieces])
         text = self._replies[0] if len(self._replies) == 1 else self._replies.pop(0)
         return SimpleNamespace(
             choices=[SimpleNamespace(message=SimpleNamespace(content=text))]
