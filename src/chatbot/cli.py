@@ -7,8 +7,8 @@ import sys
 
 from pydantic import ValidationError
 
-from config import Settings, get_settings
-from llm import ChatClient
+from chatbot.config import Settings, get_settings
+from chatbot.llm import ChatClient
 
 BANNER = "CLI Chatbot —— 输入 /help 查看命令，/exit 退出"
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import SecretStr, ValidationError
 
-from config import Settings, get_settings
+from chatbot.config import Settings, get_settings
 
 
 def test_default_values(monkeypatch):

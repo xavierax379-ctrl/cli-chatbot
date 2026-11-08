@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from llm import ChatClient
+from chatbot.llm import ChatClient
 
 
 def explain_word(client: ChatClient, system_prompt: str, word: str) -> str:

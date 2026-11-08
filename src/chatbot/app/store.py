@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import threading
 
-from app.schemas import Message
+from chatbot.app.schemas import Message
 
 
 class SessionNotFound(KeyError):
