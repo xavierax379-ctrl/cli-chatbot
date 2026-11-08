@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from config import get_settings
-from llm import ChatClient, build_messages, trim_history
+from chatbot.config import get_settings
+from chatbot.llm import ChatClient, build_messages, trim_history
 
 
 class FakeCompletions:

@@ -1,4 +1,5 @@
 """FastAPI 应用：对话接口与会话管理。"""
+
 from __future__ import annotations
 
 from collections.abc import Iterator
@@ -6,11 +7,8 @@ from collections.abc import Iterator
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 
-from app.deps import get_client, get_store
-from app.schemas import ChatRequest, ChatResponse, MessageList, SessionList
-from app.store import SessionNotFound, SessionStore
-from llm import ChatClient
-from app.schemas import (
+from chatbot.app.deps import get_client, get_store
+from chatbot.app.schemas import (
     ChatRequest,
     ChatResponse,
     MessageList,
@@ -18,11 +16,12 @@ from app.schemas import (
     WordRequest,
     WordResponse,
 )
-from app.study import explain_word
-from config import Settings, get_settings
+from chatbot.app.store import SessionNotFound, SessionStore
+from chatbot.app.study import explain_word
+from chatbot.config import Settings, get_settings
+from chatbot.llm import ChatClient
 
 app = FastAPI(title="Chatbot API", version="0.1.0")
-
 
 @app.get("/health")
 def health() -> dict[str, str]:

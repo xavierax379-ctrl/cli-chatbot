@@ -7,7 +7,7 @@ from typing import Any
 
 from openai import OpenAI
 
-from config import Settings
+from chatbot.config import Settings
 
 Message = dict[str, str]
 

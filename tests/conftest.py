@@ -10,12 +10,12 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from app.deps import get_client, get_store
-from app.main import app
-from app.store import SessionStore
-from config import Settings, get_settings
+from chatbot.app.deps import get_client, get_store
+from chatbot.app.main import app
+from chatbot.app.store import SessionStore
+from chatbot.config import Settings, get_settings
 from fake_model import FakeOpenAI
-from llm import ChatClient
+from chatbot.llm import ChatClient
 
 CONFIG_ENV_VARS = (
     "CHATBOT_API_KEY",

@@ -7,9 +7,9 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from app.store import SessionStore
-from config import get_settings
-from llm import ChatClient
+from chatbot.app.store import SessionStore
+from chatbot.config import get_settings
+from chatbot.llm import ChatClient
 
 # 进程内唯一的会话存储（内存实现，重启即清空）
 _store = SessionStore()

@@ -14,17 +14,19 @@
 ## 目录结构
 
     .
-    ├── app/
-    │   ├── main.py      # FastAPI 应用与路由
-    │   ├── schemas.py   # 请求 / 响应模型（含校验）
-    │   ├── store.py     # 内存会话存储：所有会话读写都在这里，换数据库只需改这个文件
-    │   ├── study.py     # 学习功能：单词讲解
-    │   └── deps.py      # 依赖注入：配置、存储、模型客户端
-    ├── config.py        # 全部可变配置
-    ├── llm.py           # 大模型调用封装（流式 / 非流式）
-    ├── cli.py           # 命令行版（上一版作业，仍可运行）
-    ├── tests/           # 27 个离线测试
-    ├── requirements.txt
+    ├── src/chatbot/
+    │   ├── app/
+    │   │   ├── main.py      # FastAPI 应用与路由
+    │   │   ├── schemas.py   # 请求 / 响应模型（含校验）
+    │   │   ├── store.py     # 会话存储：所有读写都在这里
+    │   │   ├── study.py     # 学习功能：单词讲解
+    │   │   └── deps.py      # 依赖注入：配置、存储、模型客户端
+    │   ├── config.py        # 全部可变配置
+    │   ├── llm.py           # 大模型调用封装（流式 / 非流式）
+    │   └── cli.py           # 命令行版（上一版作业，仍可运行）
+    ├── tests/               # 27 个离线测试
+    ├── pyproject.toml       # 打包配置 + 依赖 + pytest/ruff 配置
+    ├── requirements.txt     # -e .（依赖写在 pyproject 里）
     └── requirements-dev.txt
 
 ## 快速开始
@@ -37,12 +39,12 @@
 
 启动服务：
 
-    uvicorn app.main:app --reload
+uvicorn chatbot.app.main:app --reload
 
 - 服务地址：http://127.0.0.1:8000
 - 交互式文档（可直接点着测）：http://127.0.0.1:8000/docs
 
-命令行版仍在：`python cli.py`
+命令行版仍在：`python -m chatbot.cli`
 
 ## 配置
 
