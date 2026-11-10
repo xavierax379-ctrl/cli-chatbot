@@ -6,7 +6,9 @@ from collections.abc import Iterator
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
+from pathlib import Path
 
+from fastapi.staticfiles import StaticFiles
 from chatbot.app.deps import get_client, get_store
 from chatbot.app.schemas import (
     ChatRequest,
@@ -131,3 +133,8 @@ def study_word(
             detail=f"模型调用失败：{type(exc).__name__}",
         ) from exc
     return WordResponse(word=payload.word, explanation=explanation)
+
+# 静态目录挂载必须放在所有路由之后：
+# Starlette 按注册顺序匹配，先挂 "/" 会把 /chat 等接口吞掉
+STATIC_DIR = Path(__file__).parent / "static"
+app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
