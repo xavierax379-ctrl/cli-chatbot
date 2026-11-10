@@ -39,7 +39,9 @@ class Settings(BaseSettings):
     history_limit: int = Field(default=20, ge=0)
     request_timeout: float = Field(default=60.0, gt=0)
 
-
+    # 会话数据库文件路径（:memory: 表示内存库，测试用）
+    db_path: str = "chat.db"
+    
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     """返回全局唯一的配置对象（进程内缓存，测试里可 cache_clear()）。"""

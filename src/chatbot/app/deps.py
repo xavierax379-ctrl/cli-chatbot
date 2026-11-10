@@ -11,13 +11,16 @@ from chatbot.app.store import SessionStore
 from chatbot.config import get_settings
 from chatbot.llm import ChatClient
 
-# 进程内唯一的会话存储（内存实现，重启即清空）
-_store = SessionStore()
 
-
+@lru_cache(maxsize=1)
 def get_store() -> SessionStore:
-    """返回会话存储。测试里会 override 成新实例，保证用例隔离。"""
-    return _store
+    """返回会话存储。
+
+    - 用 lru_cache 保证进程内只有一个连接
+    - 数据库路径来自配置（CHATBOT_DB_PATH），所以数据会持久化到磁盘
+    - 不放在模块级，避免 import 时就创建数据库文件（测试好隔离）
+    """
+    return SessionStore(get_settings().db_path)
 
 
 @lru_cache(maxsize=1)
