@@ -43,10 +43,11 @@ def isolated_settings(monkeypatch):
 
 
 @pytest.fixture
-def store() -> SessionStore:
-    """每个用例一个全新的内存存储。"""
-    return SessionStore()
-
+def store(tmp_path) -> SessionStore:
+    """每个用例一个独立的临时数据库文件。"""
+    instance = SessionStore(tmp_path / "test.db")
+    yield instance
+    instance.close()
 
 @pytest.fixture
 def fake_openai() -> FakeOpenAI:
