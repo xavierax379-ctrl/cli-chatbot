@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>聊天机器人</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; height: 100vh; display: flex; background: #0f1115; color: #e6e8eb;
+           font-family: system-ui, "Segoe UI", "Microsoft YaHei", sans-serif; }
+    aside { width: 220px; border-right: 1px solid #23262d; display: flex; flex-direction: column; }
+    aside h2 { font-size: 14px; margin: 16px; color: #9aa4b2; }
+    #sessions { flex: 1; overflow: auto; padding: 0 8px; }
+    .session { padding: 8px 10px; border-radius: 8px; cursor: pointer; font-size: 13px;
+               color: #c3c9d4; margin-bottom: 4px; }
+    .session:hover { background: #1a1d24; }
+    .session.active { background: #243044; color: #fff; }
+    aside button { margin: 8px; padding: 8px; border-radius: 8px; cursor: pointer;
+                   border: 1px solid #2a2f38; background: #151922; color: #dfe3e8; }
+    main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+    header { display: flex; align-items: center; gap: 8px; padding: 10px 16px;
+             border-bottom: 1px solid #23262d; }
+    header .sid { flex: 1; font-size: 12px; color: #9aa4b2; }
+    header button, footer button { padding: 8px 12px; border-radius: 8px; cursor: pointer;
+             border: 1px solid #2a2f38; background: #151922; color: #dfe3e8; font-size: 13px; }
+    #messages { flex: 1; overflow: auto; padding: 16px; display: flex;
+                flex-direction: column; gap: 10px; }
+    .msg { max-width: 72%; padding: 10px 12px; border-radius: 12px; font-size: 14px;
+           line-height: 1.5; white-space: pre-wrap; }
+    .msg.user { align-self: flex-end; background: #2563eb; color: #fff; }
+    .msg.assistant { align-self: flex-start; background: #1b2029; }
+    .msg.error { align-self: flex-start; background: #3b1d1d; color: #ffb4b4; font-size: 13px; }
+    footer { display: flex; gap: 8px; padding: 12px; border-top: 1px solid #23262d; }
+    #input { flex: 1; padding: 10px 12px; border-radius: 10px; font-size: 14px;
+             border: 1px solid #2a2f38; background: #151922; color: #e6e8eb; }
+    #send { border: 0; background: #2563eb; color: #fff; padding: 10px 18px; }
+    #send:disabled { background: #2c3444; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+  <aside>
+    <h2>会话</h2>
+    <div id="sessions"></div>
+    <button id="new">＋ 新建会话</button>
+  </aside>
+
+  <main>
+    <header>
+      <span class="sid" id="sid">未选择会话</span>
+      <button id="clear">清空当前会话</button>
+    </header>
+    <div id="messages"></div>
+    <footer>
+      <input id="input" placeholder="输入消息，回车发送" autocomplete="off">
+      <button id="send">发送</button>
+    </footer>
+  </main>
+
+  <script>
+    const state = { sessionId: localStorage.getItem("chat_session") || null };
+    const $ = (id) => document.getElementById(id);
+
+    function setSession(id) {
+      state.sessionId = id;
+      localStorage.setItem("chat_session", id);
+      $("sid").textContent = id ? "会话：" + id : "未选择会话";
+    }
+
+    function addBubble(text, role) {
+      const div = document.createElement("div");
+      div.className = "msg " + role;
+      div.textContent = text;
+      $("messages").appendChild(div);
+      $("messages").scrollTop = $("messages").scrollHeight;
+      return div;
+    }
+
+    async function loadSessions() {
+      const resp = await fetch("/sessions");
+      const data = await resp.json();
+      const box = $("sessions");
+      box.innerHTML = "";
+      for (const id of data.sessions) {
+        const row = document.createElement("div");
+        row.className = "session" + (id === state.sessionId ? " active" : "");
+        row.textContent = id;
+        row.onclick = () => openSession(id);
+        box.appendChild(row);
+      }
+    }
+
+    async function openSession(id) {
+      setSession(id);
+      await loadSessions();
+      await loadMessages();
+    }
+
+    async function loadMessages() {
+      $("messages").innerHTML = "";
+      if (!state.sessionId) return;
+      const resp = await fetch("/sessions/" + encodeURIComponent(state.sessionId) + "/messages");
+      if (!resp.ok) return;              // 新会话还没有消息，404 属正常
+      const data = await resp.json();
+      for (const m of data.messages) addBubble(m.content, m.role);
+    }
+
+    async function send() {
+      const input = $("input");
+      const text = input.value.trim();
+      if (!text) return;
+      if (!state.sessionId) setSession("u" + Date.now());
+      input.value = "";
+
+      addBubble(text, "user");
+      const bubble = addBubble("", "assistant");
+      $("send").disabled = true;
+
+      try {
+        const resp = await fetch("/chat/stream", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: state.sessionId, message: text }),
+        });
+        if (!resp.ok || !resp.body) {
+          bubble.className = "msg error";
+          bubble.textContent = "请求失败：" + resp.status;
+          return;
+        }
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          bubble.textContent += decoder.decode(value, { stream: true });
+          $("messages").scrollTop = $("messages").scrollHeight;
+        }
+      } catch (err) {
+        bubble.className = "msg error";
+        bubble.textContent = "网络错误：" + err;
+      } finally {
+        $("send").disabled = false;
+        $("input").focus();
+        loadSessions();
+      }
+    }
+
+    async function clearSession() {
+      if (!state.sessionId) return;
+      await fetch("/sessions/" + encodeURIComponent(state.sessionId), { method: "DELETE" });
+      $("messages").innerHTML = "";
+    }
+
+    $("send").onclick = send;
+    $("new").onclick = () => { setSession("u" + Date.now()); $("messages").innerHTML = ""; loadSessions(); };
+    $("clear").onclick = clearSession;
+    $("input").addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+    });
+
+    setSession(state.sessionId);
+    loadSessions();
+    loadMessages();
+  </script>
+</body>
+</html>
