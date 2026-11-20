@@ -8,10 +8,12 @@
 - 流式输出：`/chat/stream` 边生成边返回纯文本
 - 会话管理：列出会话、查看消息记录、清空会话
 - 会话与消息持久化到 SQLite（`chat.db`），服务重启后数据仍在
+- 数据库访问使用 SQLAlchemy 2.x ORM（模型见 `models.py`），一轮对话的用户消息与回复在同一事务写入
+- 历史消息支持按关键词搜索（`GET /sessions/{id}/messages?keyword=...`）
 - 内置网页聊天界面，浏览器打开 http://127.0.0.1:8000 即可使用
 - 学习功能：`/study/word` 讲解英语单词（词性、释义、搭配、例句）
 - 配置集中在 `config.py`，用 `.env` 覆盖；API Key 用 `SecretStr` 保存，不会出现在日志和响应里
-- 38 个离线单元测试，不联网、不需要真实 API Key
+- 44 个离线单元测试，不联网、不需要真实 API Key
 
 ## 目录结构
 
@@ -20,8 +22,9 @@
     │   ├── app/
     │   │   ├── main.py          # FastAPI 应用与路由，末尾挂载静态目录
     │   │   ├── schemas.py       # 请求 / 响应模型（含校验）
-    │   │   ├── store.py         # 会话存储：SQLite 读写全部在这里
-    │   │   ├── db.py            # SQLite 连接与建表语句
+    │   │   ├── store.py         # 会话存储：ORM 读写全部在这里
+    │   │   ├── models.py        # SQLAlchemy 模型：Session / Message
+    │   │   ├── database.py      # 引擎与 Session 工厂（create_all，不删表）
     │   │   ├── study.py         # 学习功能：单词讲解
     │   │   ├── deps.py          # 依赖注入：配置、存储、模型客户端
     │   │   └── static/
@@ -29,7 +32,7 @@
     │   ├── config.py            # 全部可变配置
     │   ├── llm.py               # 大模型调用封装（流式 / 非流式）
     │   └── cli.py               # 命令行版（上一版作业，仍可运行）
-    ├── tests/                   # 38 个离线测试
+    ├── tests/                   # 44 个离线测试
     ├── pyproject.toml
     ├── requirements.txt
     └── requirements-dev.txt
@@ -109,9 +112,55 @@ erDiagram
 - 连接时执行 `PRAGMA foreign_keys = ON`（SQLite 默认不检查外键），否则级联删除不会生效
 - `MESSAGES.role` 有 `CHECK (role IN ('user','assistant'))` 约束，防止写入非法角色
 - 索引 `(session_id, id)` 覆盖"按会话取消息并按顺序返回"的查询
-- 建表语句见 `src/chatbot/app/db.py` 的 `SCHEMA` 常量，与上图字段一一对应
+- 建表语句由 `src/chatbot/app/models.py` 的 ORM 模型定义，`Base.metadata.create_all()` 首次运行时建表，与上图字段一一对应
 
 `chat.db` 属于运行时产物，已写入 `.gitignore`（`*.db`），不会提交到仓库。
+
+## 数据模型（ORM）
+
+`models.py` 用 SQLAlchemy 2.x 声明式模型描述两张表，表名、列名、类型与第四次作业的建表语句一致，
+因此可以直接读取已有的 `chat.db`，不需要迁移数据。
+
+| ORM 模型 | 数据库表 | 主要列 |
+| --- | --- | --- |
+| `models.Session` | `sessions` | `id`（PK, TEXT）、`created_at`、`updated_at` |
+| `models.Message` | `messages` | `id`（PK, INTEGER）、`session_id`（FK → `sessions.id`）、`role`、`content`、`created_at` |
+
+模型关系：`Session.messages` 与 `Message.session` 双向关联，`cascade="all, delete-orphan"`，
+删除会话时 ORM 会一并删除它的消息；`order_by="Message.id"` 让 `session.messages` 天然按对话顺序。
+
+`database.build_engine()` 里的 `create_all` 只创建**缺失**的表（`checkfirst` 默认开启），
+不会 DROP 或清空已有数据，所以升级到 ORM 后旧聊天记录仍然可读。
+
+### 一条 ORM 查询与它对应的 SQL
+
+「按关键词查历史消息」用 ORM 表达式写成：
+
+```python
+stmt = (
+    select(Message)
+    .where(Message.session_id == session_id)
+    .where(Message.content.contains(keyword, autoescape=True))
+    .order_by(Message.id)
+)
+rows = db.execute(stmt).scalars().all()
+```
+
+SQLAlchemy 会把它编译成等价的 SQL（表别名和列顺序按模型定义生成）：
+
+```sql
+SELECT messages.id, messages.session_id, messages.role, messages.content, messages.created_at
+FROM messages
+WHERE messages.session_id = ?
+  AND (messages.content LIKE '%' || ? || '%' ESCAPE '/')
+ORDER BY messages.id
+```
+
+两种写法的关系：
+
+- **ORM 是"用 Python 对象和表达式描述查询"**，SQL 由 SQLAlchemy 编译生成；执行时一样走 SQLite 的查询计划，性能没有区别。
+- 表名、列名由模型统一维护，改名只需要改模型，不会漏掉某个手写 SQL。
+- 参数仍以绑定变量（`?`）传入，天然防注入；`contains(..., autoescape=True)` 还会把 `%`、`_` 转义成字面量，避免用户搜索 `%` 时命中全部消息——手写 `LIKE` 很容易漏掉这一点。
 
 ## 接口
 
@@ -161,6 +210,18 @@ erDiagram
 
 按对话顺序返回，每条只有 `role`（`user` / `assistant`）和 `content` 两个字段，前端可以直接渲染成气泡。
 
+支持用 `keyword` 只查包含该关键词的消息（不传则返回完整历史）：
+
+    curl "http://127.0.0.1:8000/sessions/u1/messages?keyword=小明"
+
+    {"session_id": "u1",
+     "messages": [
+       {"role": "user", "content": "我叫小明，请记住"}
+     ]}
+
+过滤只作用于当前会话，返回结果仍保持原对话顺序；实现用的是 SQLAlchemy 的
+`select(...).where(Message.content.contains(keyword, autoescape=True))`。
+
 ### DELETE /sessions/{session_id} — 清空会话
 
     curl -X DELETE http://127.0.0.1:8000/sessions/u1
@@ -196,21 +257,22 @@ erDiagram
 
     pytest
 
-38 个用例，全部离线：API 测试用 `TestClient` 发请求，`tests/fake_model.py` 替换模型客户端；
+44 个用例，全部离线：API 测试用 `TestClient` 发请求，`tests/fake_model.py` 替换模型客户端；
 数据库测试用 `tmp_path` 下的独立 `.db` 文件，不碰开发机的 `chat.db` 与 `.env`。
 
-- `tests/test_db.py`：建表、历史顺序、会话隔离、清空、不存在的会话抛错、重开连接后数据仍在
+- `tests/test_db.py`：建表、一轮对话成对写入、会话隔离、清空、不存在的会话抛错、重开连接后数据仍在、**事务回滚（失败不留半轮）**、关键词查询与通配符转义
 - `tests/test_api_chat.py`：同会话连续对话、跨会话隔离、空消息被拒、模型异常回滚、单词讲解接口
-- `tests/test_api_sessions.py`：会话列表、消息顺序、清空、404
+- `tests/test_api_sessions.py`：会话列表、消息顺序、清空、404、**keyword 过滤（命中 / 全部 / 无匹配 / 跨会话隔离）**
 - `tests/test_api_stream.py`：模型收到 `stream=True`、流式内容正确、完整回复写入历史
 - `tests/test_web.py`：首页返回 index.html、静态挂载不影响接口、页面不含密钥
 - `tests/test_config.py`、`tests/test_llm.py`：配置校验与模型调用参数（上一版作业）
 
 ## 设计说明
 
-- **会话存储集中在一个模块**：`app/store.py` 是唯一读写会话的地方，路由只调用它的方法。以后换成 MySQL/PostgreSQL，只需要重写这个类，路由代码不用动。
+- **会话存储集中在一个模块**：`app/store.py` 是唯一读写会话的地方，路由只调用它的方法。以后换成 MySQL/PostgreSQL，只需要改这个类里的 ORM 查询，路由代码不用动。
+- **一轮对话一个事务**：`store.append_turn()` 把用户消息和机器人回复放在同一个 `db.begin()` 里写入，任一条失败就整体回滚，不会出现"只有提问、没有回答"的半轮历史（`tests/test_db.py::test_failed_turn_leaves_no_partial_history`）。
 - **依赖注入便于测试**：`app/deps.py` 提供 `get_store` / `get_client`，测试里用 `app.dependency_overrides` 整包替换成假实现，所以测试完全不联网。
-- **流式结束才写历史**：`/chat/stream` 在生成器里边发边累加，正常结束才把完整回复写入会话；中途失败会撤销那条提问，保证 user / assistant 成对。
+- **流式结束才写历史**：`/chat/stream` 在生成器里边发边累加，正常结束才把整轮写入会话；中途失败则什么都不写，保证 user / assistant 成对。
 - **静态挂载放在路由之后**：`app.mount("/", StaticFiles(...))` 会匹配所有路径，必须写在所有接口之后，否则 `/chat` 等会被静态目录"吞掉"返回 404（`tests/test_web.py` 有此断言）。
 - **数据库路径来自配置**：`get_store()` 用 `lru_cache` 懒加载，路径取 `CHATBOT_DB_PATH`，既不会在 import 时建库文件，也不会退化成内存库。
 
