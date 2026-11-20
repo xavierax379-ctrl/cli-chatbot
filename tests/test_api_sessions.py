@@ -38,3 +38,38 @@ def test_delete_clears_messages(api):
 def test_unknown_session_returns_404(api):
     assert api.get("/sessions/nobody/messages").status_code == 404
     assert api.delete("/sessions/nobody").status_code == 404
+
+
+def test_keyword_returns_only_matching_messages(api):
+    post_chat(api, "k1", "我喜欢吃苹果")
+    post_chat(api, "k1", "今天天气不错")
+
+    body = api.get("/sessions/k1/messages", params={"keyword": "苹果"}).json()
+
+    assert [m["content"] for m in body["messages"]] == ["我喜欢吃苹果"]
+
+
+def test_without_keyword_returns_full_history(api):
+    post_chat(api, "k1", "第一句")
+    post_chat(api, "k1", "第二句")
+
+    body = api.get("/sessions/k1/messages").json()
+
+    assert len(body["messages"]) == 4
+
+
+def test_keyword_without_match_returns_empty(api):
+    post_chat(api, "k1", "你好")
+
+    body = api.get("/sessions/k1/messages", params={"keyword": "不存在的词"}).json()
+
+    assert body["messages"] == []
+
+
+def test_keyword_does_not_leak_across_sessions(api):
+    post_chat(api, "a", "苹果在 A")
+    post_chat(api, "b", "苹果在 B")
+
+    body = api.get("/sessions/a/messages", params={"keyword": "苹果"}).json()
+
+    assert [m["content"] for m in body["messages"]] == ["苹果在 A"]

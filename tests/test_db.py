@@ -98,3 +98,26 @@ def test_failed_turn_leaves_no_partial_history(tmp_path):
 
     assert store.messages("u1") == []
     store.close()
+
+
+def test_keyword_query_keeps_original_order(tmp_path):
+    store = SessionStore(tmp_path / "chat.db")
+    store.append_turn("u1", "苹果真好吃", "推荐你吃红富士苹果")
+    store.append_turn("u1", "今天下雨", "记得带伞")
+
+    matched = store.messages("u1", keyword="苹果")
+    store.close()
+
+    assert [m.content for m in matched] == ["苹果真好吃", "推荐你吃红富士苹果"]
+
+
+def test_keyword_wildcards_are_escaped(tmp_path):
+    """% 不能当通配符：否则搜 % 会匹配全部消息。"""
+    store = SessionStore(tmp_path / "chat.db")
+    store.append_turn("u1", "进度 100% 完成", "好的")
+    store.append_turn("u1", "普通消息", "回复")
+
+    matched = store.messages("u1", keyword="%")
+    store.close()
+
+    assert [m.content for m in matched] == ["进度 100% 完成"]

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pathlib import Path
@@ -69,11 +69,16 @@ def list_sessions(store: SessionStore = Depends(get_store)) -> SessionList:
 @app.get("/sessions/{session_id}/messages", response_model=MessageList)
 def list_messages(
     session_id: str,
+    keyword: str | None = Query(
+        default=None,
+        max_length=50,
+        description="可选：只返回内容包含该关键词的消息",
+    ),
     store: SessionStore = Depends(get_store),
 ) -> MessageList:
-    """按对话顺序返回该会话的消息记录。"""
+    """按对话顺序返回该会话的消息记录；可用 keyword 过滤。"""
     try:
-        messages = store.messages(session_id)
+        messages = store.messages(session_id, keyword=keyword.strip() if keyword else None)
     except SessionNotFound as exc:
         raise HTTPException(status_code=404, detail="会话不存在") from exc
     return MessageList(session_id=session_id, messages=messages)

@@ -75,20 +75,18 @@ class SessionStore:
         with self._session_factory() as db:
             return db.get(SessionRow, session_id) is not None
 
-    def messages(self, session_id: str) -> list[Message]:
-        """按对话顺序返回该会话的全部消息。"""
+    def messages(self, session_id: str, keyword: str | None = None) -> list[Message]:
+        """按对话顺序返回该会话的消息；传 keyword 时只返回内容包含它的那些。"""
         with self._session_factory() as db:
             if db.get(SessionRow, session_id) is None:
                 raise SessionNotFound(session_id)
-            rows = (
-                db.execute(
-                    select(MessageRow)
-                    .where(MessageRow.session_id == session_id)
-                    .order_by(MessageRow.id)
-                )
-                .scalars()
-                .all()
-            )
+
+            stmt = select(MessageRow).where(MessageRow.session_id == session_id)
+            if keyword:
+                # contains() 编译成 LIKE '%关键词%'；autoescape 会把 % 和 _ 转义成字面量
+                stmt = stmt.where(MessageRow.content.contains(keyword, autoescape=True))
+
+            rows = db.execute(stmt.order_by(MessageRow.id)).scalars().all()
             return [Message(role=row.role, content=row.content) for row in rows]
 
     def list_sessions(self) -> list[str]:
