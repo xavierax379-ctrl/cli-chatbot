@@ -1,15 +1,20 @@
-"""会话存储：SQLite 实现。
+"""会话存储：SQLAlchemy ORM 实现。
 
 所有会话读写都集中在这里，路由只调用这些方法。
-以后换成 MySQL/PostgreSQL 时，只需要重写这个类，路由代码不用动。
+一轮对话（用户消息 + 机器人回复）由 append_turn() 在同一个事务里写入，
+要么都成功，要么都不写，不会留下半轮对话。
 """
 
 from __future__ import annotations
 
-import threading
 from pathlib import Path
 
-from chatbot.app.db import connect
+from sqlalchemy import delete, func, select, update
+from sqlalchemy.orm import sessionmaker
+
+from chatbot.app.database import build_engine
+from chatbot.app.models import Message as MessageRow
+from chatbot.app.models import Session as SessionRow
 from chatbot.app.schemas import Message
 
 
@@ -18,81 +23,78 @@ class SessionNotFound(KeyError):
 
 
 class SessionStore:
-    """SQLite 会话表：sessions + messages。"""
+    """基于 SQLAlchemy ORM 的会话存储。"""
 
     def __init__(self, db_path: str | Path = ":memory:") -> None:
-        # RLock：messages() 里可能要复用 exists()，普通 Lock 会被自己锁死
-        self._lock = threading.RLock()
-        self._conn = connect(db_path)
+        self._engine = build_engine(db_path)
+        # expire_on_commit=False：commit 之后对象还能读属性，不用再查一次库
+        self._session_factory = sessionmaker(bind=self._engine, expire_on_commit=False)
 
     # ---------- 写入 ----------
 
     def get_or_create(self, session_id: str) -> None:
         """会话不存在就创建一个空会话。"""
-        with self._lock:
-            self._conn.execute("INSERT OR IGNORE INTO sessions (id) VALUES (?)", (session_id,))
-            self._conn.commit()
+        with self._session_factory() as db, db.begin():
+            if db.get(SessionRow, session_id) is None:
+                db.add(SessionRow(id=session_id))
 
-    def append(self, session_id: str, role: str, content: str) -> Message:
-        """追加一条消息；会话不存在时自动创建。"""
-        message = Message(role=role, content=content)
-        with self._lock:
-            self._conn.execute("INSERT OR IGNORE INTO sessions (id) VALUES (?)", (session_id,))
-            self._conn.execute(
-                "INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)",
-                (session_id, role, content),
+    def append_turn(
+        self,
+        session_id: str,
+        user_content: str,
+        assistant_content: str,
+    ) -> None:
+        """把一轮对话写进同一个事务：要么两条都在，要么一条都没有。"""
+        with self._session_factory() as db, db.begin():
+            if db.get(SessionRow, session_id) is None:
+                db.add(SessionRow(id=session_id))
+            db.add(MessageRow(session_id=session_id, role="user", content=user_content))
+            db.add(
+                MessageRow(
+                    session_id=session_id,
+                    role="assistant",
+                    content=assistant_content,
+                )
             )
-            self._conn.execute(
-                "UPDATE sessions SET updated_at = datetime('now') WHERE id = ?",
-                (session_id,),
+            db.execute(
+                update(SessionRow)
+                .where(SessionRow.id == session_id)
+                .values(updated_at=func.datetime("now"))
             )
-            self._conn.commit()
-        return message
-
-    def pop_last(self, session_id: str) -> None:
-        """撤销最后一条消息（模型调用失败时，避免留下没有回复的提问）。"""
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT MAX(id) AS last_id FROM messages WHERE session_id = ?",
-                (session_id,),
-            ).fetchone()
-            if row["last_id"] is not None:
-                self._conn.execute("DELETE FROM messages WHERE id = ?", (row["last_id"],))
-                self._conn.commit()
 
     def clear(self, session_id: str) -> None:
         """清空会话里的消息，但会话本身保留。"""
-        with self._lock:
-            if not self.exists(session_id):
+        with self._session_factory() as db, db.begin():
+            if db.get(SessionRow, session_id) is None:
                 raise SessionNotFound(session_id)
-            self._conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
-            self._conn.commit()
+            db.execute(delete(MessageRow).where(MessageRow.session_id == session_id))
 
     # ---------- 读取 ----------
 
     def exists(self, session_id: str) -> bool:
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT 1 FROM sessions WHERE id = ?", (session_id,)
-            ).fetchone()
-            return row is not None
+        with self._session_factory() as db:
+            return db.get(SessionRow, session_id) is not None
 
     def messages(self, session_id: str) -> list[Message]:
         """按对话顺序返回该会话的全部消息。"""
-        with self._lock:
-            if not self.exists(session_id):
+        with self._session_factory() as db:
+            if db.get(SessionRow, session_id) is None:
                 raise SessionNotFound(session_id)
-            rows = self._conn.execute(
-                "SELECT role, content FROM messages WHERE session_id = ? ORDER BY id",
-                (session_id,),
-            ).fetchall()
-        return [Message(role=row["role"], content=row["content"]) for row in rows]
+            rows = (
+                db.execute(
+                    select(MessageRow)
+                    .where(MessageRow.session_id == session_id)
+                    .order_by(MessageRow.id)
+                )
+                .scalars()
+                .all()
+            )
+            return [Message(role=row.role, content=row.content) for row in rows]
 
     def list_sessions(self) -> list[str]:
-        with self._lock:
-            rows = self._conn.execute("SELECT id FROM sessions").fetchall()
-        return sorted(row["id"] for row in rows)
+        with self._session_factory() as db:
+            rows = db.execute(select(SessionRow.id)).scalars().all()
+            return sorted(rows)
 
     def close(self) -> None:
-        with self._lock:
-            self._conn.close()
+        self._engine.dispose()

@@ -30,7 +30,6 @@ def health() -> dict[str, str]:
     """给调用方（或以后的前端）一个探活接口。"""
     return {"status": "ok"}
 
-
 @app.post("/chat", response_model=ChatResponse)
 def chat(
     payload: ChatRequest,
@@ -40,22 +39,24 @@ def chat(
     """一问一答：带上该会话的历史，返回完整回复。"""
     session_id = payload.session_id
     store.get_or_create(session_id)
-    store.append(session_id, "user", payload.message)
+
+    # 历史单独取出来；本轮用户消息只参与请求，不单独落库
+    history = store.messages(session_id)
+    turn = [*history, {"role": "user", "content": payload.message}]
 
     try:
-        reply = client.chat(store.messages(session_id))
+        reply = client.chat(turn)
     except Exception as exc:  # 网络 / 鉴权 / 限流等
-        store.pop_last(session_id)  # 撤掉这条没有回复的提问
         raise HTTPException(
             status_code=502,
             detail=f"模型调用失败：{type(exc).__name__}",
         ) from exc
 
     if not reply.strip():
-        store.pop_last(session_id)
         raise HTTPException(status_code=502, detail="模型没有返回内容")
 
-    store.append(session_id, "assistant", reply)
+    # 用户消息与回复在同一个事务里写入，失败不会留下半轮
+    store.append_turn(session_id, payload.message, reply)
     return ChatResponse(session_id=session_id, reply=reply)
 
 
@@ -89,6 +90,7 @@ def clear_session(
     except SessionNotFound as exc:
         raise HTTPException(status_code=404, detail="会话不存在") from exc
 
+    
 @app.post("/chat/stream")
 def chat_stream(
     payload: ChatRequest,
@@ -98,25 +100,24 @@ def chat_stream(
     """流式回复：边生成边返回纯文本，结束后把完整回复写入历史。"""
     session_id = payload.session_id
     store.get_or_create(session_id)
-    store.append(session_id, "user", payload.message)
-    history = store.messages(session_id)  # 快照，避免生成过程中历史被改
+    history = store.messages(session_id)
+    turn = [*history, {"role": "user", "content": payload.message}]
 
     def generate() -> Iterator[str]:
         parts: list[str] = []
         completed = False
         try:
-            for piece in client.stream_reply(history):
+            for piece in client.stream_reply(turn):
                 parts.append(piece)
                 yield piece
             completed = True
         finally:
-            # 正常结束才写入 assistant 消息；中途失败/断开则撤掉提问
+            # 流正常结束才把整轮写库；中途失败则什么都不写
             if completed:
-                store.append(session_id, "assistant", "".join(parts))
-            else:
-                store.pop_last(session_id)
+                store.append_turn(session_id, payload.message, "".join(parts))
 
     return StreamingResponse(generate(), media_type="text/plain; charset=utf-8")
+
 
 @app.post("/study/word", response_model=WordResponse)
 def study_word(
